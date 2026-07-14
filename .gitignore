@@ -14,3 +14,4 @@ cmake-build-debug*
 /compile_commands.json
 .clangd
 .cache
+.ccls-cache
