@@ -2,7 +2,7 @@
 
 Handy command-line helpers for SonicDE, for tasks like opening files, running programs as another user and editing file types.
 
-## Unreleased
+## 6.8.2 (2026-11-10)
 
 - Behind the scenes: the system information tool uses QXLibre for X11 when it's installed, going back to Qt's own X11 support when it isn't.
 
