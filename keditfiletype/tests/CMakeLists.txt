@@ -18,7 +18,12 @@ target_link_libraries(filetypestest
    Qt::Test
 )
 
-add_test(NAME kcm_smoketest COMMAND kcmshell6 --smoke-test kcm_filetypes)
+# The kcmshell6 of the KCMUtils built against, never another desktop's on PATH.
+find_program(KCMSHELL6_EXECUTABLE kcmshell6
+    PATHS ${KF6KCMUtils_DIR}/../../../bin ${KF6KCMUtils_DIR}/../../../../bin
+    NO_DEFAULT_PATH REQUIRED
+)
+add_test(NAME kcm_smoketest COMMAND ${KCMSHELL6_EXECUTABLE} --smoke-test kcm_filetypes)
 set_tests_properties(kcm_smoketest PROPERTIES
     ENVIRONMENT_MODIFICATION QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/bin
 )

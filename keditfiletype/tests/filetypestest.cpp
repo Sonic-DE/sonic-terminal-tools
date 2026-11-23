@@ -15,7 +15,6 @@
 #include <QLoggingCategory>
 #include <QMimeDatabase>
 #include <QProcess>
-#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
 
@@ -24,6 +23,7 @@
 
 // Unfortunately this isn't available in non-developer builds of Qt...
 // extern Q_CORE_EXPORT int qmime_secondsBetweenChecks; // see qmimeprovider.cpp
+extern KSERVICE_EXPORT int ksycoca_ms_between_checks; // see ksycoca.cpp
 
 class FileTypesTest : public QObject
 {
@@ -35,6 +35,7 @@ private Q_SLOTS:
         QLoggingCategory::setFilterRules(QStringLiteral("kf.coreaddons.kdirwatch.debug=true"));
 
         QStandardPaths::setTestModeEnabled(true);
+        ksycoca_ms_between_checks = 0;
 
         // update-mime-database needs to know about that test directory for the mimetype pattern change in testMimeTypePatterns to have an effect
         qputenv("XDG_DATA_HOME", QFile::encodeName(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)));
@@ -97,10 +98,13 @@ private Q_SLOTS:
         QCOMPARE(data.patterns(), patterns);
         data.refresh(); // reload from the xml
         QCOMPARE(data.patterns(), patterns);
-        // Check what's in QMimeDatabase
-        QStringList newPatterns = db.mimeTypeForName(QStringLiteral("text/plain")).globPatterns();
-        newPatterns.sort();
-        QCOMPARE(newPatterns, patterns);
+        // Check what's in QMimeDatabase, which re-reads its cache at most every 5 s
+        const auto databasePatterns = [&db] {
+            QStringList newPatterns = db.mimeTypeForName(QStringLiteral("text/plain")).globPatterns();
+            newPatterns.sort();
+            return newPatterns;
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(databasePatterns(), patterns, 10000);
         QVERIFY(!data.isDirty());
 
         // And then removing the custom file by hand should revert to the initial state
@@ -109,10 +113,7 @@ private Q_SLOTS:
         QVERIFY(!packageFileName.isEmpty());
         QFile::remove(packageFileName);
         MimeTypeWriter::runUpdateMimeDatabase();
-        // Check what's in QMimeDatabase
-        newPatterns = db.mimeTypeForName(QStringLiteral("text/plain")).globPatterns();
-        newPatterns.sort();
-        QCOMPARE(newPatterns, origPatterns);
+        QTRY_COMPARE_WITH_TIMEOUT(databasePatterns(), origPatterns, 10000);
     }
 
     void testAddService()
@@ -264,9 +265,9 @@ private Q_SLOTS:
         QVERIFY(data.isDirty());
         QVERIFY(data.sync());
         MimeTypeWriter::runUpdateMimeDatabase();
-        QMimeType mime = db.mimeTypeForName(mimeTypeName);
-        QVERIFY(mime.isValid());
-        QCOMPARE(mime.comment(), fakeComment);
+        QVERIFY(db.mimeTypeForName(mimeTypeName).isValid());
+        // QMimeDatabase re-reads its cache at most every 5 s.
+        QTRY_COMPARE_WITH_TIMEOUT(db.mimeTypeForName(mimeTypeName).comment(), fakeComment, 10000);
 
         // Cleanup
         QVERIFY(MimeTypeWriter::hasDefinitionFile(mimeTypeName));
@@ -316,9 +317,7 @@ private: // helper methods
 
     void runKBuildSycoca()
     {
-        // Wait for notifyDatabaseChanged DBus signal
-        // (The real KCM code simply does the refresh in a slot, asynchronously)
-
+        // (The real KCM code refreshes in a slot when the database changes, asynchronously.)
         QProcess proc;
         // proc.setProcessChannelMode(QProcess::ForwardedChannels);
         const QString kbuildsycoca = QStandardPaths::findExecutable(QLatin1String(KBUILDSYCOCA_EXENAME));
@@ -326,11 +325,11 @@ private: // helper methods
         QStringList args;
         args << QStringLiteral("--testmode");
         proc.start(kbuildsycoca, args);
-        QSignalSpy spy(KSycoca::self(), qOverload<>(&KSycoca::databaseChanged));
-        proc.waitForFinished();
-        qDebug() << "waiting for signal";
-        QVERIFY(spy.wait(10000));
-        qDebug() << "got signal";
+        QVERIFY(proc.waitForFinished());
+        QCOMPARE(proc.exitCode(), 0);
+        // The file watcher's databaseChanged can still be the previous rebuild's, so check the
+        // database file directly (ksycoca_ms_between_checks is 0, see initTestCase).
+        KSycoca::self()->ensureCacheValid();
     }
 
     void createDesktopFile(const QString &path, const QStringList &mimeTypes)
